@@ -1,0 +1,4 @@
+build/
+Mac Cleaner.app/
+.gstack/
+.DS_Store
