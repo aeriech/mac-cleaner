@@ -19,7 +19,7 @@ Anything it removes goes to the Trash first, so you can put it back if you chang
 > The download only works on Macs with Apple chips (M1, M2, M3 and so on). If your Mac has an Intel chip, use [Build it yourself](#install-build-it-yourself) below.
 > To check which chip you have: Apple menu  → **About This Mac** → look at **Chip**.
 
-1. Go to the [**Releases**](../../releases/latest) page and download **Mac-Cleaner.zip**.
+1. Go to the [**Releases**](https://github.com/aeriech/mac-cleaner/releases/latest) page and download **Mac-Cleaner.zip**.
 2. Double-click the zip to unzip it.
 3. Drag **Mac Cleaner** into your **Applications** folder.
 4. Open it. The first time, macOS will say it can't verify the app (it isn't from the App Store). That's expected:
