@@ -336,6 +336,7 @@ struct Leftover: Identifiable, Sendable {
     var kinds: [String]
     var size: Int64 = 0
     var selected = true
+    var note: String? = nil   // set for possible leftovers: shown unticked with the reason to check
 }
 
 /// Every bundle ID on this Mac. Spotlight also finds apps outside /Applications (dev builds, helpers).
@@ -353,43 +354,77 @@ func launchProgram(_ plist: String) -> String? {
     return d["Program"] as? String ?? (d["ProgramArguments"] as? [String])?.first
 }
 
-/// Library items named after a bundle ID that nothing on this Mac can own: not Apple, not any
-/// installed app, not any app from the same vendor (keeps shared updaters safe), not a shared
-/// framework ID, and not containing an installed app's name (e.g. "com.electron.dockerdesktop").
-func findLeftovers(alsoInstalled extra: Set<String>) -> [Leftover] {
+/// Library items left behind by apps that are no longer on this Mac.
+/// Items named after a bundle ID are leftovers when nothing installed owns them: not Apple, not an installed
+/// app or one of its helpers, not a shared framework, not containing an installed app's name.
+/// Two kinds are only *possible* leftovers, returned unticked with a note:
+/// - IDs from a developer that still has another app installed (they may be shared, like an updater);
+/// - Electron app folders named after the app rather than a bundle ID ("pollyenglish-teacher-client").
+func findLeftovers(alsoInstalled extra: Set<String>, library lib: String = homePath("Library")) -> [Leftover] {
     let apps = discoverApps()
-    let installed = installedBundleIDs(apps).union(extra).map(canonicalID)
-    let vendors = Set(installed.map(vendor))
+    let installed = Set(installedBundleIDs(apps).union(extra).map(canonicalID))
+    var vendorApp: [String: String] = [:]   // developer prefix → one of its installed apps ("" if unnamed)
+    for id in installed { vendorApp[vendor(id)] = "" }
+    for app in apps { vendorApp[vendor(app.bundleID.lowercased())] = app.name }
     let appNames = apps.map { $0.name.lowercased().filter { $0.isLetter || $0.isNumber } }.filter { $0.count >= 4 }
     let sharedFrameworks: Set<String> = ["com.electron", "com.github.electron", "org.chromium", "org.sparkle-project", "is.workflow"]
-    func isOwned(_ id: String) -> Bool {
+    func owned(_ id: String) -> Bool {
         let flat = id.filter { $0.isLetter || $0.isNumber }
         return id.hasPrefix("com.apple.") || id == "local.maccleaner" || installed.contains(id)
-            || vendors.contains(vendor(id)) || sharedFrameworks.contains(vendor(id))
-            || appNames.contains { flat.contains($0) }
+            || installed.contains { id.hasPrefix($0 + ".") || $0.hasPrefix(id + ".") }   // an installed app's helper or parent
+            || sharedFrameworks.contains(vendor(id)) || appNames.contains { flat.contains($0) }
+    }
+    func vendorNote(_ id: String) -> String? {
+        guard let app = vendorApp[vendor(id)] else { return nil }
+        return app.isEmpty ? "Another app from this developer is still installed, so this might be shared with it"
+                           : "\(app) is from the same developer and still installed, so this might be shared with it"
     }
 
-    let lib = homePath("Library")
     let places: [(String, String)] = [
         ("Application Support", "App data"), ("Caches", "Cache"), ("Containers", "Sandbox data"),
-        ("Preferences", "Preferences"), ("Saved Application State", "Saved state"), ("HTTPStorages", "Web data"),
-        ("WebKit", "Web data"), ("Logs", "Logs"),
+        ("Group Containers", "Shared data"), ("Preferences", "Preferences"), ("Saved Application State", "Saved state"),
+        ("HTTPStorages", "Web data"), ("WebKit", "Web data"), ("Logs", "Logs"),
     ]
     var byID: [String: Leftover] = [:]
-    func add(_ id: String, _ path: String, _ kind: String) {
+    func add(_ id: String, _ path: String, _ kind: String, note: String? = nil) {
         var item = byID[id] ?? Leftover(identifier: id, paths: [], kinds: [])
         item.paths.append(path)
         if !item.kinds.contains(kind) { item.kinds.append(kind) }
+        if let note, item.note == nil { item.note = note; item.selected = false }
         byID[id] = item
     }
     for (dir, kind) in places {
         let base = join(lib, dir)
         for entry in listDir(base) {
             let id = canonicalID(bundleStem(entry))
-            guard looksLikeBundleID(id), !isOwned(id) else { continue }
-            add(id, join(base, entry), kind)
+            guard looksLikeBundleID(id), !owned(id) else { continue }
+            add(id, join(base, entry), kind, note: vendorNote(id))
         }
     }
+
+    // Electron apps keep their data in a folder named after themselves, not a bundle ID.
+    func flat(_ s: String) -> String { s.lowercased().filter { $0.isLetter || $0.isNumber } }
+    var knownNames = Set(NSWorkspace.shared.runningApplications.compactMap { $0.localizedName.map(flat) })
+    for app in apps {
+        let info = Bundle(path: app.path)?.infoDictionary ?? [:]
+        let names = [app.name, info["CFBundleName"] as? String, info["CFBundleExecutable"] as? String,
+                     app.bundleID.split(separator: ".").last.map(String.init)]
+        knownNames.formUnion(names.compactMap { $0 }.map(flat))
+    }
+    let removedAppNote = "No installed app matches this name, so it looks like data from an app you removed"
+    let support = join(lib, "Application Support")
+    for entry in listDir(support) where !looksLikeBundleID(canonicalID(bundleStem(entry))) && !knownNames.contains(flat(entry)) {
+        let contents = Set(listDir(join(support, entry)))
+        guard contents.contains("Preferences"), contents.contains("Code Cache") || contents.contains("GPUCache") else { continue }
+        add(entry, join(support, entry), "App data", note: removedAppNote)
+    }
+    let updates = join(support, "Caches")   // electron-updater downloads: "<app>-updater"
+    for entry in listDir(updates) where entry.hasSuffix("-updater") {
+        let app = String(entry.dropLast("-updater".count))
+        guard !knownNames.contains(flat(app)) else { continue }
+        add(app, join(updates, entry), "Update download", note: removedAppNote)
+    }
+
     // Launch agents whose program no longer exists are leftovers (unless they're Apple's).
     let agents = join(lib, "LaunchAgents")
     for entry in listDir(agents) where entry.hasSuffix(".plist") {
@@ -400,9 +435,20 @@ func findLeftovers(alsoInstalled extra: Set<String>) -> [Leftover] {
             add(id, path, "Launch agent for a missing app")
         }
     }
-    var result = Array(byID.values)
+
+    // One row per app: fold helpers and extensions in ("com.microsoft.teams2.agent" → "com.microsoft.teams2").
+    var merged: [String: Leftover] = [:]
+    for id in byID.keys.sorted(by: { $0.count < $1.count }) {
+        let item = byID[id]!
+        guard let parent = merged.keys.first(where: { id.hasPrefix($0 + ".") }) else { merged[id] = item; continue }
+        merged[parent]!.paths += item.paths
+        for kind in item.kinds where !merged[parent]!.kinds.contains(kind) { merged[parent]!.kinds.append(kind) }
+        if item.note != nil && merged[parent]!.note == nil { merged[parent]!.note = item.note; merged[parent]!.selected = false }
+    }
+    var result = Array(merged.values)
     for i in result.indices { result[i].size = result[i].paths.reduce(0) { $0 + diskUsage($1) } }
-    return result.filter { $0.size > 0 }.sorted { $0.size > $1.size }
+    // Sure leftovers first, then the ones to check; biggest first within each.
+    return result.filter { $0.size > 0 }.sorted { ($0.note == nil ? 0 : 1, -$0.size) < ($1.note == nil ? 0 : 1, -$1.size) }
 }
 
 @MainActor
@@ -473,9 +519,15 @@ struct LeftoversView: View {
                                 Toggle(item.identifier, isOn: $item.selected).labelsHidden().toggleStyle(.checkbox)
                                 IconTile(symbol: "questionmark.app.dashed", tint: .orange)
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(item.identifier).fontWeight(.medium).lineLimit(1)
+                                    HStack(spacing: 6) {
+                                        Text(item.identifier).fontWeight(.medium).lineLimit(1)
+                                        if item.note != nil { Badge(text: "Check first", color: .orange) }
+                                    }
                                     Text(item.kinds.joined(separator: " · ") + " · \(item.paths.count) item\(item.paths.count == 1 ? "" : "s")")
                                         .font(.caption).foregroundStyle(.secondary)
+                                    if let note = item.note {
+                                        Text(note).font(.caption).foregroundStyle(.orange)
+                                    }
                                 }
                                 Spacer()
                                 Text(fmt(item.size)).monospacedDigit().foregroundStyle(.secondary)

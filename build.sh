@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Builds "Mac Cleaner.app" with just the Command Line Tools (no Xcode project needed).
 #   ./build.sh            build into this folder
-#   ./build.sh --install  also copy it into /Applications, ready to keep in the Dock
+#   ./build.sh --install  build and move it into /Applications, ready to keep in the Dock
 #   ./build.sh --setup-signing  one-time: create a local code-signing certificate in your login
 #                               keychain, so macOS keeps permissions (Full Disk Access) across rebuilds
 set -euo pipefail
@@ -68,6 +68,6 @@ echo "Built $APP"
 if [[ "${1:-}" == "--install" ]]; then
   pkill -x MacCleaner 2>/dev/null || true
   rm -rf "/Applications/$APP"
-  cp -R "$APP" /Applications/
+  mv "$APP" /Applications/   # move, not copy: a leftover build here shows up as a second Mac Cleaner
   echo "Installed /Applications/$APP"
 fi

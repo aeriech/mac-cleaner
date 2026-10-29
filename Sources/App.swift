@@ -2,12 +2,13 @@
 import SwiftUI
 
 enum Page: String, CaseIterable, Identifiable {
-    case smartClean, largeFiles, duplicates, similarImages, uninstaller, leftovers, performance, backgroundItems, storage
+    case smartClean, appData, largeFiles, duplicates, similarImages, uninstaller, leftovers, performance, backgroundItems, storage
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .smartClean: "Smart Clean"
+        case .appData: "App Data"
         case .largeFiles: "Large & Old Files"
         case .duplicates: "Duplicates"
         case .similarImages: "Similar Images"
@@ -22,6 +23,7 @@ enum Page: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .smartClean: "sparkles"
+        case .appData: "square.stack.3d.up"
         case .largeFiles: "doc.text.magnifyingglass"
         case .duplicates: "doc.on.doc"
         case .similarImages: "photo.on.rectangle.angled"
@@ -40,6 +42,7 @@ final class AppModel: ObservableObject {
     @Published var page: Page? = .smartClean
     @Published var volume = volumeInfo()
     let clean = CleanModel()
+    let appData = AppDataModel()
     let large = LargeFilesModel()
     let duplicates = DuplicatesModel()
     let similar = SimilarImagesModel()
@@ -56,7 +59,7 @@ struct RootView: View {
     var body: some View {
         NavigationSplitView {
             List(selection: $app.page) {
-                Section("Cleanup") { item(.smartClean); item(.largeFiles); item(.duplicates); item(.similarImages) }
+                Section("Cleanup") { item(.smartClean); item(.appData); item(.largeFiles); item(.duplicates); item(.similarImages) }
                 Section("Applications") { item(.uninstaller); item(.leftovers) }
                 Section("Speed & Safety") { item(.performance); item(.backgroundItems) }
                 Section("Overview") { item(.storage) }
@@ -114,6 +117,7 @@ struct RootView: View {
     @ViewBuilder private var detail: some View {
         switch app.page ?? .smartClean {
         case .smartClean: SmartCleanView(m: app.clean)
+        case .appData: AppDataView(m: app.appData)
         case .largeFiles: LargeFilesView(m: app.large)
         case .duplicates: DuplicatesView(m: app.duplicates)
         case .similarImages: SimilarImagesView(m: app.similar)

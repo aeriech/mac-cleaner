@@ -34,6 +34,7 @@ struct Snapshot {
                 switch page {
                 case .leftovers: await model.leftovers.scan()
                 case .largeFiles: await model.large.scan()
+                case .appData: await model.appData.scan()
                 default: break
                 }
             }
